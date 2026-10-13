@@ -35,6 +35,11 @@
 
 @synthesize aboutWindow, refreshTimer, checkUpdatesWindow, chartWindowController, helpWindow, hotKeysWindowController;
 
+// Localized string with english fallback for languages without the key
+#define TBSLocalizedString(key, fallback) [[NSBundle mainBundle] localizedStringForKey:(key) value:(fallback) table:nil]
+
+#define TBS_PASSWORDLESS_OFFERED_KEY @"passwordlessModeOffered"
+
 // Struct to take the cpu samples
 struct cpusample {
     uint64_t totalSystemTime;
@@ -58,7 +63,7 @@ struct cpusample sample_two;
     
     if ([SystemCommands isModuleLoaded]) {
         
-        [self refreshAuthRef];
+        [self refreshAuthRefIfNeeded];
         
         [SystemCommands unLoadModuleWithAuthRef:authorizationRef];
         [SystemCommands loadModuleWithAuthRef:authorizationRef];
@@ -187,6 +192,13 @@ struct cpusample sample_two;
     
     // Charting menu item
     [chartsMenuItem setTitle:NSLocalizedString(@"menuCharting", nil)];
+    
+    // Passwordless mode menu item, just before the exit item
+    passwordlessMenuItem = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(togglePasswordlessMode:) keyEquivalent:@""];
+    [passwordlessMenuItem setTarget:self];
+    NSInteger exitIndex = [statusMenu indexOfItem:exitItem];
+    [statusMenu insertItem:passwordlessMenuItem atIndex:(exitIndex >= 0 ? exitIndex : [statusMenu numberOfItems])];
+    [self updatePasswordlessMenuItem];
     
     // Update open at login status
     [checkOpenAtLogin setState:[StartupHelper isOpenAtLogin]];
@@ -321,6 +333,7 @@ struct cpusample sample_two;
     {
         // Refresh status
         [self updateStatus];
+        [self updatePasswordlessMenuItem];
     }
 }
 
@@ -683,6 +696,9 @@ void sample(bool isOne) {
 // Enable / Disable turbo boost depending on current status
 - (void) enableDisableTurboBoost {
     
+    // First time: offer to stop asking for the password on each switch
+    [self offerPasswordlessModeIfNeeded];
+    
     // Enable or disable Turbo Boost depending on current status
     BOOL isOn = ![SystemCommands isModuleLoaded];
     
@@ -716,7 +732,7 @@ void sample(bool isOne) {
 // Loads the kernel module disabling turbo boost feature
 - (void) disableTurboBoost {
     
-    [self refreshAuthRef];
+    [self refreshAuthRefIfNeeded];
     
     [SystemCommands loadModuleWithAuthRef:authorizationRef];
     
@@ -725,7 +741,7 @@ void sample(bool isOne) {
 // Unloads the kernel module enabling turbo boost feature
 - (void) enableTurboBoost {
     
-    [self refreshAuthRef];
+    [self refreshAuthRefIfNeeded];
     
     [SystemCommands unLoadModuleWithAuthRef:authorizationRef];
     
@@ -1248,15 +1264,86 @@ OSStatus hotKeyPressedEvent(EventHandlerCallRef theHandlerRef, EventRef theEvent
         kAuthorizationFlagExtendRights;
         
         status = AuthorizationCopyRights(authorizationRef, &rights, NULL, flags, NULL);
-        if (status != errAuthorizationSuccess)
+        if (status != errAuthorizationSuccess) {
             NSLog(@"Copy Rights Unsuccessful: %d", status);
+            
+            // Drop the unauthorized ref so the next attempt asks again instead of reusing it
+            AuthorizationFree(authorizationRef, kAuthorizationFlagDefaults);
+            authorizationRef = NULL;
+        }
         
     }
 }
 
+// Only ask for the password when passwordless mode is not installed
+- (void) refreshAuthRefIfNeeded {
+    
+    if (![SystemCommands isPasswordlessModeInstalled]) {
+        [self refreshAuthRef];
+    }
+}
+
+// Ask once if the user wants to stop being asked for the password
+- (void) offerPasswordlessModeIfNeeded {
+    
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults boolForKey:TBS_PASSWORDLESS_OFFERED_KEY] || [SystemCommands isPasswordlessModeInstalled]) {
+        return;
+    }
+    [defaults setBool:YES forKey:TBS_PASSWORDLESS_OFFERED_KEY];
+    [defaults synchronize];
+    
+    [NSApp activateIgnoringOtherApps:YES];
+    
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:TBSLocalizedString(@"passwordless_offer_title", @"Stop asking for the password?")];
+    [alert setInformativeText:TBSLocalizedString(@"passwordless_offer_text", @"Turbo Boost Switcher can be allowed to enable and disable Turbo Boost without asking for your administrator password every time. You'll enter it one last time now.\n\nYou can turn this off later from the menu.")];
+    [alert addButtonWithTitle:TBSLocalizedString(@"passwordless_offer_yes", @"Don't Ask Again")];
+    [alert addButtonWithTitle:TBSLocalizedString(@"passwordless_offer_no", @"Not Now")];
+    
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        [self installPasswordlessMode];
+    }
+}
+
+- (BOOL) installPasswordlessMode {
+    
+    [self refreshAuthRef];
+    
+    BOOL installed = [SystemCommands installPasswordlessModeWithAuthRef:authorizationRef];
+    
+    if (!installed) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:TBSLocalizedString(@"passwordless_failed", @"Could not set up password-free switching.")];
+        [alert setAlertStyle:NSWarningAlertStyle];
+        [alert runModal];
+    }
+    
+    [self updatePasswordlessMenuItem];
+    return installed;
+}
+
+// Menu action: switch passwordless mode on / off
+- (IBAction) togglePasswordlessMode:(id)sender {
+    
+    if ([SystemCommands isPasswordlessModeInstalled]) {
+        [self refreshAuthRef];
+        [SystemCommands uninstallPasswordlessModeWithAuthRef:authorizationRef];
+        [self updatePasswordlessMenuItem];
+    } else {
+        [self installPasswordlessMode];
+    }
+}
+
+- (void) updatePasswordlessMenuItem {
+    
+    [passwordlessMenuItem setTitle:TBSLocalizedString(@"passwordless_menu", @"Switch Without Password")];
+    [passwordlessMenuItem setState:([SystemCommands isPasswordlessModeInstalled] ? NSOnState : NSOffState)];
+}
+
 - (float) readCpuFrequency {
         
-    [self refreshAuthRef];
+    [self refreshAuthRefIfNeeded];
     
     return [SystemCommands readCurrentCpuFreqWithAuthRef:authorizationRef];
 }

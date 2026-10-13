@@ -63,7 +63,7 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = tbswitcher_resources;
-			dstSubfolderSpec = 16;
+			dstSubfolderSpec = 7;
 			files = (
 				45C49BB324637B7500DD1E2D /* DisableTurboBoost.64bits.kext in CopyFiles */,
 				45C49BB224637B6B00DD1E2D /* DisableTurboBoost.32bits.kext in CopyFiles */,

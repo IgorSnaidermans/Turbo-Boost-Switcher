@@ -91,3 +91,10 @@
 "helpCharting" = "Charts are refreshed according to the configured refresh rate.\n\nDue to macOS restrictions, CPU average frequency is only obtained when charting window is open.";
 
 "lblNoData" = "No data available";
+
+"passwordless_menu" = "Switch Without Password";
+"passwordless_offer_title" = "Stop asking for the password?";
+"passwordless_offer_text" = "Turbo Boost Switcher can be allowed to enable and disable Turbo Boost without asking for your administrator password every time. You'll enter it one last time now.\n\nYou can turn this off later from the menu.";
+"passwordless_offer_yes" = "Don't Ask Again";
+"passwordless_offer_no" = "Not Now";
+"passwordless_failed" = "Could not set up password-free switching.";
