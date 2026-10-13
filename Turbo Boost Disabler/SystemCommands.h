@@ -68,4 +68,12 @@
 // Get base frequency as GHz
 + (float) getBaseFreq;
 
+// Passwordless mode: a root-owned copy of the kext plus a sudoers rule that only allows
+// loading/unloading that kext and reading powermetrics, so no password is asked after setup
++ (BOOL) isPasswordlessModeInstalled;
+
++ (BOOL) installPasswordlessModeWithAuthRef:(AuthorizationRef) authRef;
+
++ (BOOL) uninstallPasswordlessModeWithAuthRef:(AuthorizationRef) authRef;
+
 @end

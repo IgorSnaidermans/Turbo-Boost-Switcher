@@ -48,6 +48,7 @@ Also, and just if you're running on macOS High Sierra for the first time, you'll
 
 Depending on your user configuration, OSX may ask for root password when enabling / disabling Turbo Boost. That's because kernel extensions must be installed as root and the user privileges are stored on a system cache. To avoid this behaviour, you can follow two approaches:
 
+ - Turn on "Switch Without Password" in the app menu (the app also offers it the first time you switch Turbo Boost). You enter your password one last time, and the app copies the kernel extension to `/Library/PrivilegedHelperTools/TurboBoostSwitcher` (owned by root) and adds a rule in `/etc/sudoers.d/turbo-boost-switcher` that only allows loading/unloading that extension and reading `powermetrics` without a password. Turn the menu item off (or delete both paths) to go back to asking for the password. After updating the app, turn it off and on again so the installed extension copy is refreshed.
  - [Buy the PRO version](https://gumroad.com/l/YeBQUF) that installs a daemon and doesn't need to as for root since it uses IPC to communicate with the main app. It also offer another features so you can get cool things in exchange for supporting the app :).
  - Just run the app as root doing something like 'sudo /Applications/Turbo\ Boost\ Switcher.app/Contents/MacOS/Turbo\ Boost\ Switcher'
 

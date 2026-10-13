@@ -53,6 +53,9 @@
     // Current auth ref
     AuthorizationRef authorizationRef;
     
+    // Passwordless mode menu item (created on code)
+    NSMenuItem *passwordlessMenuItem;
+    
     // Menú outlets
     IBOutlet NSMenuItem *enableDisableItem;
     IBOutlet NSMenuItem *checkUpdatesItem;
@@ -169,6 +172,9 @@
 - (void) openChartWindow;
 
 - (float) readCpuFrequency;
+
+// Toggle passwordless mode (sudoers rule) on / off
+- (IBAction) togglePasswordlessMode:(id)sender;
 
 
 @property (assign) IBOutlet NSWindow *window;

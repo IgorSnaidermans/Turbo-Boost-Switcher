@@ -91,3 +91,10 @@
 "helpCharting" = "Las gráficas se actualizan conforme a la frecuencia de refresco configurada.\n\nDebido a restricciones de macOS, la frecuencia promedio de la CPU solo se obtiene cuando la ventana de gráficos está abierta.";
 
 "lblNoData" = "Sin datos disponibles";
+
+"passwordless_menu" = "Cambiar sin contraseña";
+"passwordless_offer_title" = "¿Dejar de pedir la contraseña?";
+"passwordless_offer_text" = "Turbo Boost Switcher puede activar y desactivar Turbo Boost sin pedir la contraseña de administrador cada vez. Tendrás que introducirla una última vez ahora.\n\nPuedes desactivarlo más tarde desde el menú.";
+"passwordless_offer_yes" = "No volver a preguntar";
+"passwordless_offer_no" = "Ahora no";
+"passwordless_failed" = "No se pudo configurar el cambio sin contraseña.";

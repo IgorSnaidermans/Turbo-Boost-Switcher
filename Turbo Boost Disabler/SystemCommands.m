@@ -49,6 +49,11 @@ static NSArray *allSensors = nil;
 static NSString *currentSensor = nil;
 static NSArray *arrayWithBundleId = nil;
 
+// Passwordless mode files
+#define TBS_KEXT_BUNDLE_ID @"com.rugarciap.DisableTurboBoost"
+#define TBS_PRIVILEGED_DIR @"/Library/PrivilegedHelperTools/TurboBoostSwitcher"
+#define TBS_SUDOERS_FILE @"/private/etc/sudoers.d/turbo-boost-switcher"
+
 kern_return_t SMCCall2(int index, SMCKeyData_t *inputStructure, SMCKeyData_t *outputStructure, io_connect_t conn);
 
 
@@ -294,6 +299,157 @@ int SMCGetFanSpeed(char *key)
 }
 
 
+// Runs a shell script as root through the auth ref. Extra args are available as $1, $2...
++ (BOOL) runScriptAsAdmin:(NSString *) script withAuthRef:(AuthorizationRef) authRef andArgs:(NSArray *) args {
+    
+    NSMutableArray *allArgs = [NSMutableArray arrayWithObjects:@"-c", script, @"sh", nil];
+    [allArgs addObjectsFromArray:args];
+    
+    FILE *myCommunicationsPipe = NULL;
+    
+    int count = (int)[allArgs count];
+    
+    char *myArguments[count+1];
+    
+    for (int i=0; i<count; i++) {
+        myArguments[i] = (char *)[(NSString *)[allArgs objectAtIndex:i] UTF8String];
+    }
+    myArguments[count] = NULL;
+    
+    OSStatus resultStatus = AuthorizationExecuteWithPrivileges (authRef,
+                                                   "/bin/sh", kAuthorizationFlagDefaults, myArguments,
+                                                   &myCommunicationsPipe);
+    
+    if (resultStatus != errAuthorizationSuccess) {
+        NSLog(@"Error: %d", resultStatus);
+        return NO;
+    }
+    
+    // Wait for the script to finish
+    if (myCommunicationsPipe != NULL) {
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), myCommunicationsPipe) != NULL) {
+            NSLog(@"TBS: %s", buffer);
+        }
+        fclose(myCommunicationsPipe);
+    }
+    int status;
+    wait(&status);
+    
+    return YES;
+}
+
+// Runs a command through sudo without prompting. Fails if sudo would need a password.
++ (BOOL) runSudoWithArgs:(NSArray *) args output:(NSString **) output {
+    
+    NSPipe *pipe = [NSPipe pipe];
+    
+    NSTask *task = [[NSTask alloc] init];
+    task.launchPath = @"/usr/bin/sudo";
+    task.arguments = [@[@"-n"] arrayByAddingObjectsFromArray:args];
+    task.standardInput = [NSFileHandle fileHandleWithNullDevice];
+    task.standardOutput = pipe;
+    task.standardError = [NSFileHandle fileHandleWithNullDevice];
+    
+    @try {
+        [task launch];
+    } @catch (NSException *exception) {
+        NSLog(@"TBS: sudo launch failed: %@", exception);
+        return NO;
+    }
+    
+    NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+    [task waitUntilExit];
+    
+    if (output != NULL) {
+        *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    }
+    
+    return task.terminationStatus == 0;
+}
+
+// Path of the root-owned kext copy used on passwordless mode
++ (NSString *) installedModulePath {
+    NSString *kextName = [[self getModulePath:[self is32bits]] lastPathComponent];
+    return [TBS_PRIVILEGED_DIR stringByAppendingPathComponent:kextName];
+}
+
++ (NSArray *) sudoLoadArgs {
+    return @[@"/usr/bin/kextutil", [self installedModulePath]];
+}
+
++ (NSArray *) sudoUnloadArgs {
+    return @[@"/sbin/kextunload", @"-b", TBS_KEXT_BUNDLE_ID];
+}
+
++ (NSArray *) sudoPowermetricsArgs {
+    return @[@"/usr/bin/powermetrics", @"-n", @"1", @"-i", @"10"];
+}
+
++ (BOOL) isPasswordlessModeInstalled {
+    
+    if (![[NSFileManager defaultManager] fileExistsAtPath:[self installedModulePath]]) {
+        return NO;
+    }
+    
+    // sudo -n -l <command> succeeds only if the command is allowed without a password
+    NSArray *checkArgs = [@[@"-l"] arrayByAddingObjectsFromArray:[self sudoUnloadArgs]];
+    return [self runSudoWithArgs:checkArgs output:NULL];
+}
+
++ (BOOL) installPasswordlessModeWithAuthRef:(AuthorizationRef) authRef {
+    
+    // Only plain user names are written to sudoers
+    NSString *userName = NSUserName();
+    NSRegularExpression *userRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_][A-Za-z0-9_.-]*$" options:0 error:nil];
+    if ((userName == nil) || ([userRegex numberOfMatchesInString:userName options:0 range:NSMakeRange(0, [userName length])] != 1)) {
+        NSLog(@"TBS: unsupported user name for passwordless mode: %@", userName);
+        return NO;
+    }
+    
+    NSString *sourcePath = [self getModulePath:[self is32bits]];
+    
+    NSMutableString *rules = [NSMutableString stringWithString:@"# Created by Turbo Boost Switcher. Delete this file to ask for the password again.\n"];
+    for (NSArray *cmd in @[[self sudoLoadArgs], [self sudoUnloadArgs], [self sudoPowermetricsArgs]]) {
+        [rules appendFormat:@"%@ ALL=(root) NOPASSWD: %@\n", userName, [cmd componentsJoinedByString:@" "]];
+    }
+    
+    // The kext is copied to a root-owned folder, so the sudoers rule can't be used to load anything else
+    NSString *script =
+    @"set -e\n"
+    @"dir='" TBS_PRIVILEGED_DIR @"'\n"
+    @"mkdir -p /Library/PrivilegedHelperTools\n"
+    @"rm -rf \"$dir\"\n"
+    @"mkdir -m 755 \"$dir\"\n"
+    @"cp -R \"$1\" \"$dir/\"\n"
+    @"chown -R root:wheel \"$dir\"\n"
+    @"chmod -R go-w \"$dir\"\n"
+    @"mkdir -p -m 755 /private/etc/sudoers.d\n"
+    @"tmp=$(mktemp /private/etc/sudoers.d/.tbs.XXXXXX)\n"
+    @"printf '%s' \"$2\" > \"$tmp\"\n"
+    @"chown root:wheel \"$tmp\"\n"
+    @"chmod 440 \"$tmp\"\n"
+    @"if ! /usr/sbin/visudo -cf \"$tmp\"; then rm -f \"$tmp\"; exit 1; fi\n"
+    @"mv -f \"$tmp\" '" TBS_SUDOERS_FILE @"'\n";
+    
+    if (![self runScriptAsAdmin:script withAuthRef:authRef andArgs:@[sourcePath, rules]]) {
+        return NO;
+    }
+    
+    return [self isPasswordlessModeInstalled];
+}
+
++ (BOOL) uninstallPasswordlessModeWithAuthRef:(AuthorizationRef) authRef {
+    
+    NSString *script =
+    @"rm -f '" TBS_SUDOERS_FILE @"'\n"
+    @"rm -rf '" TBS_PRIVILEGED_DIR @"'\n";
+    
+    [self runScriptAsAdmin:script withAuthRef:authRef andArgs:@[]];
+    
+    return ![self isPasswordlessModeInstalled];
+}
+
 // Deprecated. TODO: To be removed on next version.
 + (BOOL) runProcess:(NSString*)scriptPath
                      withArguments:(NSArray *)arguments
@@ -516,6 +672,10 @@ int SMCGetFanSpeed(char *key)
 
 + (BOOL) loadModuleWithAuthRef:(AuthorizationRef) authRef {
     
+    if ([self isPasswordlessModeInstalled]) {
+        return [self runSudoWithArgs:[self sudoLoadArgs] output:NULL];
+    }
+    
     BOOL is32bits = [self is32bits];
     NSString *modulePath = [self getModulePath:is32bits];
     return [self loadModuleWithPath:modulePath andAuthRef:authRef];
@@ -523,6 +683,10 @@ int SMCGetFanSpeed(char *key)
 
 
 + (BOOL) unLoadModuleWithAuthRef:(AuthorizationRef) authRef {
+    
+    if ([self isPasswordlessModeInstalled]) {
+        return [self runSudoWithArgs:[self sudoUnloadArgs] output:NULL];
+    }
     
     BOOL is32bits = [self is32bits];
     NSString *modulePath = [self getModulePath:is32bits];
@@ -592,6 +756,19 @@ int SMCGetFanSpeed(char *key)
 // 2.12.0 - Reac CPU Frequency
 + (float) readCurrentCpuFreqWithAuthRef:(AuthorizationRef) authRef {
     
+    if ([self isPasswordlessModeInstalled]) {
+        NSString *output = nil;
+        if (![self runSudoWithArgs:[self sudoPowermetricsArgs] output:&output]) {
+            return -1.0f;
+        }
+        for (NSString *line in [output componentsSeparatedByString:@"\n"]) {
+            if ([line rangeOfString:@"System Average"].location != NSNotFound) {
+                return [self parseCpuFreqLine:line];
+            }
+        }
+        return 0.0f;
+    }
+    
     // sudo powermetrics -n 1 -i 10 | grep "System Average"
     NSArray *args = [NSArray arrayWithObjects:@"-c", @"powermetrics -n 1 -i 10 |grep 'System Average'", nil];
     
@@ -626,22 +803,28 @@ int SMCGetFanSpeed(char *key)
         
         NSString *dataAsStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 
-        NSRange startRange = [dataAsStr rangeOfString:@"("];
-        NSRange endRange = [dataAsStr rangeOfString:@")"];
-        
-        if (startRange.location != NSNotFound && endRange.location != NSNotFound) {
-            
-            NSRange finalRange = NSMakeRange(startRange.location+1, endRange.location - startRange.location);
-            
-            NSString *substr = [dataAsStr substringWithRange:finalRange];
-
-            NSString *finalValueStr = [substr componentsSeparatedByString:@" "][0];
-            
-            return [finalValueStr floatValue] / 1000.0f;
-        }
-        return 0.0f;
+        return [self parseCpuFreqLine:dataAsStr];
     }
     
+}
+
+// Parses powermetrics "System Average frequency as fraction of nominal: 72.35% (1664.10 Mhz)" as GHz
++ (float) parseCpuFreqLine:(NSString *) dataAsStr {
+    
+    NSRange startRange = [dataAsStr rangeOfString:@"("];
+    NSRange endRange = [dataAsStr rangeOfString:@")"];
+    
+    if (startRange.location != NSNotFound && endRange.location != NSNotFound) {
+        
+        NSRange finalRange = NSMakeRange(startRange.location+1, endRange.location - startRange.location);
+        
+        NSString *substr = [dataAsStr substringWithRange:finalRange];
+
+        NSString *finalValueStr = [substr componentsSeparatedByString:@" "][0];
+        
+        return [finalValueStr floatValue] / 1000.0f;
+    }
+    return 0.0f;
 }
 
 // Get base frequency as GHz
