@@ -658,16 +658,18 @@ int SMCGetFanSpeed(char *key)
 // Get the module path depending on arch
 + (NSString *) getModulePath:(BOOL) is32bits {
     
-    NSString *bundlePathValue = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
-    
     // Load path depending on architecture
-    NSString *finalPath = [[bundlePathValue stringByAppendingPathComponent:@"tbswitcher_resources"] stringByAppendingPathComponent:@"DisableTurboBoost.64bits.kext"];
+    NSString *kextName = is32bits ? @"DisableTurboBoost.32bits.kext" : @"DisableTurboBoost.64bits.kext";
     
-    if (is32bits) {
-        finalPath = [[bundlePathValue stringByAppendingPathComponent:@"tbswitcher_resources"] stringByAppendingPathComponent:@"DisableTurboBoost.32bits.kext"];
+    // The kext is bundled inside the app, so the .app can be installed alone on /Applications
+    NSString *bundledPath = [[[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"tbswitcher_resources"] stringByAppendingPathComponent:kextName];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:bundledPath]) {
+        return bundledPath;
     }
     
-    return finalPath;
+    // Older layout: tbswitcher_resources folder next to the .app
+    NSString *bundlePathValue = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
+    return [[bundlePathValue stringByAppendingPathComponent:@"tbswitcher_resources"] stringByAppendingPathComponent:kextName];
 }
 
 + (BOOL) loadModuleWithAuthRef:(AuthorizationRef) authRef {
